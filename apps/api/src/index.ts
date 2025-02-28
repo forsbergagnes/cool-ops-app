@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { getCalendar, getEmail } from './main.ts'
+import { getCalendar, getEmail, getSheet, run } from './main.ts'
 
 const app = new Hono()
 
@@ -26,6 +26,17 @@ app.get('/:userId/calendar', async (c) => {
   const userId = c.req.param('userId')
   const res = await getCalendar(userId)
   return c.json(res)
+})
+
+app.get('/:userId/sheet', async (c) => {
+  const userId = c.req.param('userId')
+  const res = await getSheet(userId)
+  return c.json(res)
+})
+
+app.get('/run', async (c) => {
+  return c.json(await run())
+  // return c.json(res)
 })
 
 serve(

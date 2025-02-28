@@ -1,6 +1,4 @@
 import { google } from 'googleapis'
-import * as clientCredentials from '../google-client-credentials.json' assert { type: 'json' }
-import * as secret from '../google-service-account-private-key.json' assert { type: 'json' }
 
 /**
  * Vi använder ett service account med domain-wide delegation. Det gör dock att vi har tillgång till hela skoj-organisationens privata mailkorgar osv - inte så nice!
@@ -92,9 +90,11 @@ import * as secret from '../google-service-account-private-key.json' assert { ty
 //   }
 // }
 
+const spreadsheetId = '1FIRtWL22u-U-KrhfhXcEPqONoXDLnhEC0OFeiKZICRw'
+
 const getAuthClient = (userId: string) =>
   new google.auth.JWT({
-    keyFile: 'google-secret-key.json',
+    keyFile: 'google-service-account-private-key.json',
     scopes: [
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/calendar.readonly',
@@ -103,15 +103,24 @@ const getAuthClient = (userId: string) =>
     subject: `${userId}@hejare.se`,
   })
 
-export const getEmail = async (userId: string) => {
+type GetEmailResponse = {
+  domain: string
+  numberOfContacts: number
+  lastDate: string
+}[]
+
+export const getEmail = async (userId: string): Promise<GetEmailResponse> => {
   const authClient = getAuthClient(userId)
   await authClient.authorize()
   const email = `${userId}@hejare.se`
+  const mondayThisWeek = getStartOfWorkWeek()
+
+  // console.log(mondayThisWeek.toLocaleDateString())
 
   const gmail = google.gmail({ version: 'v1', auth: authClient })
   const emailsBasic = await gmail.users.messages.list({
     userId: email,
-    q: `from:${email} after:2025-01-01`,
+    q: `from:${email} after:${mondayThisWeek.toLocaleDateString()}`,
   })
 
   if (!emailsBasic.data.messages) return []
@@ -172,19 +181,20 @@ export const getEmail = async (userId: string) => {
     byDomain[domain] = arr
   })
 
-  const byDomainWithCountAndLastDate: Record<string, { numberOfContacts: number; lastDate: string }> = {}
+  const byDomainWithCountAndLastDate: Array<{ domain: string; numberOfContacts: number; lastDate: string }> = []
 
   Object.keys(byDomain).forEach((key) => {
     if (!byDomain[key]) return
-    byDomainWithCountAndLastDate[key] = {
+    byDomainWithCountAndLastDate.push({
+      domain: key,
       numberOfContacts: byDomain[key].length,
       lastDate: new Date(Math.max(...byDomain[key].map((e) => e.date))).toLocaleDateString(),
-    }
+    })
   })
 
   // const mostContacts = Math.max(...Object.keys(byDomainWithCount).map((e) => byDomainWithCount[e]?.numberOfContacts ?? 0))
 
-  return { emailsByDomain: byDomainWithCountAndLastDate }
+  return byDomainWithCountAndLastDate
 }
 
 export const getCalendar = async (userId: string) => {
@@ -193,12 +203,15 @@ export const getCalendar = async (userId: string) => {
   await authClient.authorize()
 
   const calendar = google.calendar({ version: 'v3', auth: authClient })
+  const mondayThisWeek = getStartOfWorkWeek().toISOString()
+  const fridayThisWeek = getEndOfWorkWeek().toISOString()
 
   const events = await calendar.events.list({
     calendarId: email,
     singleEvents: true,
     orderBy: 'startTime',
-    timeMin: '2025-01-01T00:00:00Z',
+    timeMin: mondayThisWeek,
+    timeMax: fridayThisWeek,
   })
 
   if (!events.data.items) return
@@ -225,10 +238,22 @@ export const getCalendar = async (userId: string) => {
       start: a.start,
     }))
 
-  return { filteredOutLargeEvents }
+  return filteredOutLargeEvents
 }
 
-export const getMondayThisWeek = () => {
+// Taget från https://weeknumber.net/how-to/javascript
+const getWeek = (dateInput: Date) => {
+  let date = new Date(dateInput.getTime())
+  date.setHours(0, 0, 0, 0)
+  // Thursday in current week decides the year.
+  date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7))
+  // January 4 is always in week 1.
+  let week1 = new Date(date.getFullYear(), 0, 4)
+  // Adjust to Thursday in week 1 and count number of weeks from date to week1.
+  return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
+}
+
+export const getStartOfWorkWeek = () => {
   const today = new Date()
   const weekday = today.getDay()
   const mondayThisWeek = new Date(today)
@@ -236,6 +261,16 @@ export const getMondayThisWeek = () => {
   mondayThisWeek.setHours(0, 0, 0)
 
   return mondayThisWeek
+}
+
+export const getEndOfWorkWeek = () => {
+  const today = new Date()
+  const weekday = today.getDay()
+  const fridayThisWeek = new Date(today)
+  fridayThisWeek.setDate(today.getDate() + 5 - weekday)
+  fridayThisWeek.setHours(17, 0, 0)
+
+  return fridayThisWeek
 }
 
 const checkForEmailToIgnore = (s?: string | null) => {
@@ -265,3 +300,210 @@ const domainsToIgnore = [
   'customer-658-a104',
   'catering',
 ]
+
+export const getSheet = async (userId: string) => {
+  const authClient = getAuthClient(userId)
+  await authClient.authorize()
+
+  const sheets = google.sheets({ version: 'v4', auth: authClient })
+  const res = sheets.spreadsheets.get({
+    spreadsheetId,
+  })
+
+  return res
+}
+
+export const run = async () => {
+  const mondayThisWeek = getStartOfWorkWeek()
+  const currentWeekNumber = getWeek(mondayThisWeek)
+  const currentYear = mondayThisWeek.getFullYear()
+
+  const authClient = getAuthClient('agnes')
+  await authClient.authorize()
+
+  const resultByUser = []
+
+  try {
+    const ellenEmails = await getEmail('ellen')
+    resultByUser.push({
+      user: 'Ellen',
+      emailResult: ellenEmails,
+      calendarResult: await getCalendar('ellen'),
+      numberOfExternalEmailsSent: ellenEmails.reduce((n, { numberOfContacts }) => n + numberOfContacts, 0),
+    })
+    const nikiEmails = await getEmail('niki')
+    resultByUser.push({
+      user: 'Niki',
+      emailResult: nikiEmails,
+      calendarResult: await getCalendar('niki'),
+      numberOfExternalEmailsSent: nikiEmails.reduce((n, { numberOfContacts }) => n + numberOfContacts, 0),
+    })
+  } catch (error) {
+    console.error('Something went wrong', error)
+    return
+  }
+
+  const { spreadsheets } = google.sheets({ version: 'v4', auth: authClient })
+  const sheetTitle = `Vecka ${currentWeekNumber} ${currentYear}`
+  const sheetId = parseInt(`${currentWeekNumber}${currentYear}`)
+
+  const spreadsheet = await spreadsheets.get({
+    spreadsheetId,
+  })
+
+  const doesSheetExist = spreadsheet.data.sheets?.find((s) => s.properties?.sheetId === sheetId)
+
+  const [ellenResult, nikiResult] = resultByUser
+
+  const longestDomainArray =
+    (ellenResult?.emailResult.length ?? 0) > (nikiResult?.emailResult.length ?? 0)
+      ? ellenResult?.emailResult
+      : nikiResult?.emailResult
+
+  const requests = []
+  if (!doesSheetExist) {
+    requests.push({
+      addSheet: {
+        properties: {
+          title: sheetTitle,
+          sheetId,
+        },
+      },
+    })
+  }
+  requests.push({
+    updateCells: {
+      rows: [
+        {
+          values: [
+            {},
+            {
+              userEnteredValue: {
+                stringValue: 'Skickade externa mail',
+              },
+              userEnteredFormat: {
+                textFormat: {
+                  bold: true,
+                },
+              },
+            },
+            {
+              userEnteredValue: {
+                stringValue: 'Externa möten',
+              },
+              userEnteredFormat: {
+                textFormat: {
+                  bold: true,
+                },
+              },
+            },
+          ],
+        },
+        {
+          values: [
+            {
+              userEnteredValue: {
+                stringValue: 'Ellen',
+              },
+              userEnteredFormat: {
+                textFormat: {
+                  bold: true,
+                },
+              },
+            },
+            {
+              userEnteredValue: {
+                numberValue: ellenResult?.numberOfExternalEmailsSent,
+              },
+            },
+            {
+              userEnteredValue: {
+                numberValue: ellenResult?.calendarResult?.length,
+              },
+            },
+          ],
+        },
+        {
+          values: [
+            {
+              userEnteredValue: {
+                stringValue: 'Niki',
+              },
+              userEnteredFormat: {
+                textFormat: {
+                  bold: true,
+                },
+              },
+            },
+            {
+              userEnteredValue: {
+                numberValue: nikiResult?.numberOfExternalEmailsSent,
+              },
+            },
+            {
+              userEnteredValue: {
+                numberValue: nikiResult?.calendarResult?.length,
+              },
+            },
+          ],
+        },
+        {},
+        {
+          values: [
+            {},
+            {
+              userEnteredValue: {
+                stringValue: 'Externa mail Ellen',
+              },
+              userEnteredFormat: {
+                textFormat: {
+                  bold: true,
+                },
+              },
+            },
+            {
+              userEnteredValue: {
+                stringValue: 'Externa mail Niki',
+              },
+              userEnteredFormat: {
+                textFormat: {
+                  bold: true,
+                },
+              },
+            },
+          ],
+        },
+        ...(longestDomainArray
+          ? longestDomainArray?.map((_e, i) => ({
+              values: [
+                {},
+                {
+                  userEnteredValue: {
+                    stringValue: ellenResult?.emailResult[i]?.domain,
+                  },
+                },
+                {
+                  userEnteredValue: {
+                    stringValue: nikiResult?.emailResult[i]?.domain,
+                  },
+                },
+              ],
+            }))
+          : []),
+      ],
+      fields: '*',
+      range: {
+        sheetId,
+        startRowIndex: 0,
+      },
+    },
+  })
+
+  return await spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      includeSpreadsheetInResponse: true,
+      requests,
+    },
+  })
+}
