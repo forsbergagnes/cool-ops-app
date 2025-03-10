@@ -117,5 +117,6 @@ export const run = async () => {
     return
   }
 
-  return await postToSheet({ resultByUser })
+  await postToSheet({ resultByUser })
+  return resultByUser
 }
