@@ -1,5 +1,4 @@
 {
-  "extends": "@getcronit/pylon/tsconfig.pylon.json",
   "compilerOptions": {
     "noEmit": true,
     "baseUrl": ".",
