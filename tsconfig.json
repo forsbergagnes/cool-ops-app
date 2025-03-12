@@ -1,4 +1,5 @@
 {
+  "extends": "@getcronit/pylon/tsconfig.pylon.json",
   "compilerOptions": {
     "noEmit": true,
     "baseUrl": ".",
@@ -12,6 +13,10 @@
     "strict": true,
     "target": "ESNext",
     "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx"
-  }
+    "jsxImportSource": "hono/jsx",
+  },
+  "include": [
+    "pylon.d.ts",
+    "apps/**/*.ts"
+  ]
 }

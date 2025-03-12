@@ -1,6 +1,7 @@
-import { getEmail } from './access/gmail.ts'
+import { getEmail, loadEmails } from './access/gmail.ts'
 import { getCalendar } from './access/calendar.ts'
 import { postToSheet } from './access/spreadsheets.ts'
+import { db } from './lib/db.ts'
 
 /**
  * Vi använder ett service account med domain-wide delegation. Det gör dock att vi har tillgång till hela skoj-organisationens privata mailkorgar osv - inte så nice!
@@ -98,14 +99,16 @@ export const run = async () => {
   const resultByUser = []
 
   try {
-    const ellenEmails = await getEmail('ellen')
+    await loadEmails('ellen');
+    const ellenEmails = await getEmail('ellen@hejare.se')
     resultByUser.push({
       user: 'Ellen',
       emailResult: ellenEmails,
       calendarResult: await getCalendar('ellen'),
       numberOfExternalEmailsSent: ellenEmails.reduce((n, { numberOfContacts }) => n + numberOfContacts, 0),
     })
-    const nikiEmails = await getEmail('niki')
+    await loadEmails('niki');
+    const nikiEmails = await getEmail('niki@hejare.se')
     resultByUser.push({
       user: 'Niki',
       emailResult: nikiEmails,
@@ -117,6 +120,11 @@ export const run = async () => {
     return
   }
 
+  resultByUser.map((value) => {
+    value.emailResult
+  });
+
   await postToSheet({ resultByUser })
+
   return resultByUser
 }

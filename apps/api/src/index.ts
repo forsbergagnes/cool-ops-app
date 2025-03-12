@@ -1,10 +1,9 @@
 import { serve } from '@hono/node-server'
-import { Hono } from 'hono'
 import { run } from './main.ts'
 import { getEmail } from './access/gmail.ts'
 import { getCalendar } from './access/calendar.ts'
-
-const app = new Hono()
+import { app } from '@getcronit/pylon';
+import { db } from './lib/db.ts';
 
 // app.get('/:userId', async (c) => {
 //   const userId = c.req.param('userId') as UserId
@@ -38,5 +37,6 @@ serve(
   },
   (info) => {
     console.log(`Server is running on http://${info.address}:${info.port}`)
+    db.$connect();
   }
 )
