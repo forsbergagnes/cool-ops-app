@@ -139,8 +139,6 @@ export const getEmail = async (mail: string): Promise<GetEmailResponse> => {
     }
   });
 
-  console.log(mails);
-
   const regexp = /[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g
 
   const filtered = mails.map((e) => {
