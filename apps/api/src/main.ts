@@ -1,5 +1,5 @@
 import { getEmail, loadEmails } from './access/gmail.ts'
-import { getCalendar } from './access/calendar.ts'
+import { getCalendar, loadCalendar } from './access/calendar.ts'
 import { postToSheet } from './access/spreadsheets.ts'
 import { db } from './lib/db.ts'
 
@@ -100,6 +100,7 @@ export const run = async () => {
 
   try {
     await loadEmails('ellen');
+    await loadCalendar('ellen');
     const ellenEmails = await getEmail('ellen@hejare.se')
     resultByUser.push({
       user: 'Ellen',
@@ -108,6 +109,7 @@ export const run = async () => {
       numberOfExternalEmailsSent: ellenEmails.reduce((n, { numberOfContacts }) => n + numberOfContacts, 0),
     })
     await loadEmails('niki');
+    await loadCalendar('niki');
     const nikiEmails = await getEmail('niki@hejare.se')
     resultByUser.push({
       user: 'Niki',

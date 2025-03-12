@@ -20,3 +20,11 @@ model Mail {
   topic       String
   date        DateTime
 }
+
+model Event {
+  id          String @id @map("_id")
+  organizer   String
+  attendees   String[]
+  summary     String
+  date        DateTime?
+}
