@@ -1,7 +1,6 @@
 import { getEmail, loadEmails } from './access/gmail.ts'
 import { getCalendar, loadCalendar } from './access/calendar.ts'
 import { postToSheet } from './access/spreadsheets.ts'
-import { db } from './lib/db.ts'
 
 /**
  * Vi använder ett service account med domain-wide delegation. Det gör dock att vi har tillgång till hela skoj-organisationens privata mailkorgar osv - inte så nice!

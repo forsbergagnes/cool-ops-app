@@ -12,10 +12,6 @@
     "strict": true,
     "target": "ESNext",
     "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx",
-  },
-  "include": [
-    "pylon.d.ts",
-    "apps/**/*.ts"
-  ]
+    "jsxImportSource": "hono/jsx"
+  }
 }

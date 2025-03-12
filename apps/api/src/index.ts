@@ -1,9 +1,12 @@
 import { serve } from '@hono/node-server'
+import { Hono } from 'hono'
 import { run } from './main.ts'
 import { getEmail } from './access/gmail.ts'
 import { getCalendar } from './access/calendar.ts'
-import { app } from '@getcronit/pylon';
 import { db } from './lib/db.ts';
+
+const app = new Hono();
+
 
 // app.get('/:userId', async (c) => {
 //   const userId = c.req.param('userId') as UserId
