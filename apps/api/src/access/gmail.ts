@@ -1,4 +1,4 @@
-import { gmail_v1, google } from 'googleapis'
+import { google } from 'googleapis'
 import { getStartOfWorkWeek } from '../helpers/get-start-of-work-week.ts'
 import { getAuthClient } from './auth.ts'
 import { getUnique } from '../helpers/get-unique.ts'
