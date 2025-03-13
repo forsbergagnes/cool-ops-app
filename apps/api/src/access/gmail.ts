@@ -13,12 +13,42 @@ export type GetEmailResponse = {
   lastDate: string
 }[]
 
+const processUser = async (name: string, email: string): Promise<Omit<User, "id"> | undefined> => {
+  const regexp = /[a-zA-Z0-9_.+-]+@([a-zA-Z0-9-]+)\.[a-zA-Z0-9-.]+/;
+  const matches = email.match(regexp);
+
+  const user = await db.user.findFirst({ where: { email } });
+  if (!user) {
+    if (matches) {
+      const domain = matches[1];
+
+      if (!domain) {
+        console.log(`Unable to parse domain from ${email}`);
+        return;
+      }
+
+      let existingDomain = await db.organization.findFirst({ where: { slug: domain } });
+      if (!existingDomain) {
+        existingDomain = await db.organization.create({ data: { name: domain, slug: domain } })
+      }
+
+      return { email: email, name: name || null, organizationId: existingDomain.id };
+    }
+    console.log(`[Sender] Inserting user ${email}`);
+  } else {
+    console.log(`[Sender] User ${email} already exists`);
+  }
+
+  return;
+}
+
 export const loadEmails = async (userId: string) => {
   const startOfWorkWeek = getStartOfWorkWeek()
   const authClient = getAuthClient(userId)
   await authClient.authorize()
   const email = `${userId}@hejare.se`
   const gmail = google.gmail({ version: 'v1', auth: authClient })
+
   const emailsBasic = await gmail.users.messages.list({
     userId: email,
     q: `(from:${email} OR to:${email}) after:${startOfWorkWeek.toLocaleDateString()}`,
@@ -69,31 +99,18 @@ export const loadEmails = async (userId: string) => {
 
     if (!senderDetails.emails[0] || !recipientDetails.emails) return;
 
-    const sen = await db.user.findFirst({ where: { email: senderDetails.emails[0] } });
-    if (!sen) {
-      console.log(`[Sender] Found no user ${senderDetails.emails[0]}`);
-      const mail = senderDetails.emails[0];
-      if (mail) {
-        console.log(`[Sender] Inserting user ${mail}`);
-        newUsers.push({ email: mail, name: senderDetails.name || null });
-      }
-    } else {
-      console.log(`[Sender] User ${senderDetails.emails[0]} already exists`);
+    const newUser = await processUser(senderDetails.name || '', senderDetails.emails[0]);
+    if (newUser) {
+      newUsers.push(newUser);
     }
 
-    const rec = await db.user.findFirst({ where: { email: recipientDetails.emails[0] } });
-    if (!rec) {
-      console.log(`[Recipient] Found no user ${recipientDetails.emails[0]}`);
-      const mail = recipientDetails.emails[0];
-      if (mail) {
-        console.log(`[Recipient] Inserting user ${mail}`);
-        const existingUser = newUsers.find((u) => u.email === mail);
-        if (!existingUser)
-          newUsers.push({ email: mail, name: senderDetails.name || null });
+    // Iterate over the recipients and see if one of them needs to be added to the db
+    await Promise.all(recipientDetails.emails.map(async (email) => {
+      const newRecipient = await processUser(recipientDetails.name || '', email);
+      if (newRecipient) {
+        newUsers.push(newRecipient);
       }
-    } else {
-      console.log(`[Recipient] User ${recipientDetails.emails[0]} already exists`);
-    }
+    }));
 
     return {
       id: e.id,
