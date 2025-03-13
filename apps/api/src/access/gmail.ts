@@ -3,6 +3,9 @@ import { getStartOfWorkWeek } from '../helpers/get-start-of-work-week.ts'
 import { getAuthClient } from './auth.ts'
 import { getUnique } from '../helpers/get-unique.ts'
 import { checkForDomainsToIgnore } from '../helpers/check-for-domains-to-ignore.ts'
+import { db } from '../lib/db.ts'
+import { Mail, User } from '@prisma/client'
+import { extractNameAndMail } from '../utils/index.ts'
 
 export type GetEmailResponse = {
   domain: string
@@ -10,47 +13,163 @@ export type GetEmailResponse = {
   lastDate: string
 }[]
 
-export const getEmail = async (userId: string): Promise<GetEmailResponse> => {
+const processUser = async (name: string, email: string): Promise<Omit<User, "id"> | undefined> => {
+  const regexp = /[a-zA-Z0-9_.+-]+@([a-zA-Z0-9-]+)\.[a-zA-Z0-9-.]+/;
+  const matches = email.match(regexp);
+
+  const user = await db.user.findFirst({ where: { email } });
+  if (!user) {
+    if (matches) {
+      const domain = matches[1];
+
+      if (!domain) {
+        console.log(`Unable to parse domain from ${email}`);
+        return;
+      }
+
+      let existingDomain = await db.organization.findFirst({ where: { slug: domain } });
+      if (!existingDomain) {
+        existingDomain = await db.organization.create({ data: { name: domain, slug: domain } })
+      }
+
+      return { email: email, name: name || null, organizationId: existingDomain.id };
+    }
+    console.log(`[Sender] Inserting user ${email}`);
+  } else {
+    console.log(`[Sender] User ${email} already exists`);
+  }
+
+  return;
+}
+
+export const loadEmails = async (userId: string) => {
+  const startOfWorkWeek = getStartOfWorkWeek()
   const authClient = getAuthClient(userId)
   await authClient.authorize()
   const email = `${userId}@hejare.se`
-  const startOfWorkWeek = getStartOfWorkWeek()
-
   const gmail = google.gmail({ version: 'v1', auth: authClient })
+
   const emailsBasic = await gmail.users.messages.list({
     userId: email,
     q: `(from:${email} OR to:${email}) after:${startOfWorkWeek.toLocaleDateString()}`,
   })
 
-  if (!emailsBasic.data.messages) return []
+  if (!emailsBasic.data.messages) return;
 
-  const emails = await Promise.all(
+  let emails = await Promise.all(
     emailsBasic.data.messages?.map(async (message) => {
       const emailResponse = await gmail.users.messages.get({
         userId: email,
         id: message.id ?? '',
       })
 
-      if (!emailResponse.data.payload) return
+      if (!emailResponse.data.payload) return;
 
-      const { headers, body } = emailResponse.data.payload
-      return { headers, body }
+      const { headers, body } = emailResponse.data.payload;
+
+      const from = headers?.find((ih) => ih.name === "From")?.value;
+      const to = headers?.find((ih) => ih.name === "To")?.value;
+      const date = headers?.find((ih) => ih.name === "Date")?.value;
+      const subject = headers?.find((ih) => ih.name === "Subject")?.value;
+
+      if (!message.id || !from || !to) return undefined;
+
+      return {
+        id: message.id,
+        from,
+        to,
+        date: date || "No date",
+        subject: subject || "No subject",
+      };
     })
-  )
+  );
+
+  const newUsers: Omit<User, "id">[] = [];
+
+  const newEmails: (Mail | undefined)[] = await Promise.all(emails.map(async (e) => {
+    if (!e) return;
+
+    const existingMail = await db.mail.findFirst({ where: { id: e.id } });
+    if (existingMail) return;
+
+    const senderDetails = extractNameAndMail(e.from);
+    const recipientDetails = extractNameAndMail(e.to);
+
+    if (!senderDetails || !recipientDetails) return;
+
+    if (!senderDetails.emails[0] || !recipientDetails.emails) return;
+
+    const newUser = await processUser(senderDetails.name || '', senderDetails.emails[0]);
+    if (newUser) {
+      newUsers.push(newUser);
+    }
+
+    // Iterate over the recipients and see if one of them needs to be added to the db
+    await Promise.all(recipientDetails.emails.map(async (email) => {
+      const newRecipient = await processUser(recipientDetails.name || '', email);
+      if (newRecipient) {
+        newUsers.push(newRecipient);
+      }
+    }));
+
+    return {
+      id: e.id,
+      sender: senderDetails.emails[0],
+      recipients: recipientDetails.emails,
+      topic: e.subject,
+      date: new Date(e.date),
+    };
+  }));
+
+  const uniqueNewUsers = [...new Map(newUsers.map(item =>
+    [item['email'], item])).values()];
+
+  if (uniqueNewUsers.length > 0) {
+    await db.user.createMany({
+      data: uniqueNewUsers
+    })
+  }
+
+  const definedNewEmails = newEmails.filter((e) => e) as Mail[];
+
+  if (definedNewEmails.length > 0) {
+    await db.mail.createMany({
+      data: definedNewEmails
+    });
+  }
+};
+
+export const getEmail = async (mail: string): Promise<GetEmailResponse> => {
+
+  const mails = await db.mail.findMany({
+    where: {
+      OR: [
+        {
+          sender: mail
+        },
+        {
+          recipients: {
+            has: mail
+          }
+        }
+      ]
+    }
+  });
 
   const regexp = /[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g
 
-  const filtered = emails.map((e) => {
-    const to = e?.headers?.find((ih) => ih.name === 'To')
-    if (!to || !to.value) return
-    const toEmails = to.value
-      .matchAll(regexp)
-      .toArray()
-      .map((e) => e[0])
+  const filtered = mails.map((e) => {
+    const to = e.recipients;
+    const toEmails = to.map((val) => {
+      return (
+        val.matchAll(regexp)
+          .toArray()
+          .map((e) => e[0])
+      )
+    }).flat()
 
-    const from = e?.headers?.find((ih) => ih.name === 'From')
-    if (!from || !from.value) return
-    const fromEmails = to.value
+    const from = e.sender
+    const fromEmails = from
       .matchAll(regexp)
       .toArray()
       .map((e) => e[0])
@@ -60,13 +179,13 @@ export const getEmail = async (userId: string): Promise<GetEmailResponse> => {
     const domains = getUnique(emailsToCheck.map((te) => te && te.split('@')[1]?.split('.')[0]))
     const externalDomains = domains.filter(checkForDomainsToIgnore)
 
-    const date = e?.headers?.find((ih) => ih.name === 'Date')
+    const date = e.date
 
     return {
       to: emailsToCheck,
       domains: domains,
       externalDomains: externalDomains,
-      date: date?.value ? new Date(date.value) : undefined,
+      date: date ? new Date(date) : undefined,
     }
   })
 

@@ -1,0 +1,39 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Organization {
+  id          String @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  slug        String
+  users       User[]
+}
+
+model User {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  email           String    @unique
+  name            String?
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  organizationId  String @db.ObjectId
+}
+
+model Mail {
+  id          String @id @map("_id")
+  sender      String
+  recipients  String[]
+  topic       String
+  date        DateTime
+}
+
+model Event {
+  id          String @id @map("_id")
+  organizer   String
+  attendees   String[]
+  summary     String
+  date        DateTime?
+}
